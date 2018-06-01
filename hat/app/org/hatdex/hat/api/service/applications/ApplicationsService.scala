@@ -23,6 +23,7 @@
  */
 package org.hatdex.hat.api.service.applications
 
+import akka.Done
 import javax.inject.Inject
 import com.mohiva.play.silhouette.api.Silhouette
 import org.hatdex.hat.api.models.applications.{ Application, ApplicationStatus, HatApplication, Version }
@@ -78,14 +79,19 @@ class ApplicationsService @Inject() (
       cache.remove(appCacheKey(id))
       cache.remove(s"apps:${hat.domain}")
     }
-    cache.getOrElseUpdate(appCacheKey(id), applicationsCacheDuration) {
-      cache.remove(s"apps:${hat.domain}") // if any item has expired, the aggregated statuses must be refreshed
-      for {
-        maybeApp <- trustedApplicationProvider.application(id)
-        setup <- applicationSetupStatus(id)(hat.db)
-        status <- FutureTransformations.transform(maybeApp.map(collectStatus(_, setup)))
-      } yield status
-    }
+    cache.get[HatApplication](appCacheKey(id))
+      .flatMap {
+        case Some(application) ⇒ Future.successful(Some(application))
+        case None ⇒
+          cache.remove(s"apps:${hat.domain}") // if any item has expired, the aggregated statuses must be refreshed
+          for {
+            maybeApp <- trustedApplicationProvider.application(id)
+            setup <- applicationSetupStatus(id)(hat.db)
+            status <- FutureTransformations.transform(maybeApp.map(collectStatus(_, setup)))
+            _ ← status.map(cache.set(appCacheKey(id), _, applicationsCacheDuration)).getOrElse(Future.successful(Done))
+          } yield status
+      }
+
   }
 
   def applicationStatus()(implicit hat: HatServer, user: HatUser, requestHeader: RequestHeader): Future[Seq[HatApplication]] = {
