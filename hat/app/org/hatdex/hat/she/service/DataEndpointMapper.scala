@@ -122,6 +122,7 @@ class InsightsMapper extends DataEndpointMapper {
     "twitter/tweets" → "Tweets sent",
     "facebook/feed" → "Posts composed",
     "notables/feed" → "Notes taken",
+    "spotify/feed" → "Songs listened to",
     "calendar/google/events" → "Calendar events recorded",
     "monzo/transactions" → "Transactions performed")
 
@@ -130,19 +131,19 @@ class InsightsMapper extends DataEndpointMapper {
       startDate ← Try((content \ "since").asOpt[DateTime])
       endDate ← Try((content \ "timestamp").asOpt[DateTime])
       timeIntervalString ← Try(startDate.map(eventTimeIntervalString(_, endDate)))
+      counters ← Try((content \ "counters").as[Map[String, Int]]) if counters.exists(_._2 != 0)
     } yield {
       val title = DataFeedItemTitle(
         "Your recent activity summary",
         timeIntervalString.map(interval => s"${interval._1} ${interval._2.getOrElse("")}"), Some("insight"))
 
-      val counters = (content \ "counters").as[Map[String, Int]]
       val nested: Map[String, Seq[DataFeedNestedStructureItem]] = counters.foldLeft(Seq[(String, DataFeedNestedStructureItem)]())({
         (structured, newitem) ⇒
           val item = DataFeedNestedStructureItem(textMappings.getOrElse(newitem._1, "unrecognised"), Some(newitem._2.toString), None)
           val source = newitem._1.split("/").head
           structured :+ (source → item)
       })
-        .filterNot(_._1 == "unrecognised")
+        .filterNot(_._2.content == "unrecognised")
         .filterNot(_._2.badge.contains("0"))
         .groupBy(_._1).map({
           case (k, v) ⇒ k → v.unzip._2
@@ -150,10 +151,9 @@ class InsightsMapper extends DataEndpointMapper {
 
       val simplified: String = nested.map({
         case (source, info) ⇒
-          s"""
-           | $source:
-           | \t${info.map(i ⇒ s"${i.content}: ${i.badge.getOrElse("")}").mkString("\n\t")}
-         """.stripMargin
+          s"""${source.capitalize}:
+           |  ${info.map(i ⇒ s"${i.content}: ${i.badge.getOrElse("")}").mkString("\n  ")}
+           |""".stripMargin
       }).mkString("\n")
 
       val itemContent = DataFeedItemContent(text = Some(simplified), html = None, media = None, nestedStructure = Some(nested))
